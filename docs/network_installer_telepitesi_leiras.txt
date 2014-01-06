@@ -1,0 +1,175 @@
+2013.12.24	Installer gép telepítési leírás.
+
+Az ötlet, hogy ilyet készítsek, onnan jött, hogy elég sokszor telepítek virtuális gépet, amin kipróbálok valamit, 
+majd törlöm is az egészet. Viszont örökösen végigmenni a telepítési procedúrán, egy idő után unalmassá válik.
+Gondoltam, automatizálom.
+Tudom, hogy a klónozás egy fokkal egyszerűbb lenne, de ott az utólagos átkonfigurálásokkal is gondban vagyok (nem 
+marad-e ki valami), másrészt szeretem, ha két eltérő gépen az UUID-k is eltérőek, márpedig a klónozással például
+a diszkek megtartják a sajátjukat általában. (legalábbis a VirtualBox saját klónozó eljárásával)
+
+Virtualbox konfiguráció:
+	RAM:	384M
+	Net:
+		Adapter1: NAT, 82543GC, 
+		Adapter2: Internal network (installer-net), 82543GC, Promisc: Allow all
+		Adapter3: Host-only adapter, 82543GC, Promisc: Allow all
+	Storage:
+		SATA, 32GiB
+	Némi magyarázat: a Host-only azért kell, hogy ha ssh-n (PuTTy) belépek a gépre, ne szakadjon meg a
+		kapcsolat, ha a windows sleep módba megy. (bridged, NAT+port forward esetén megszakad)
+		A 82543GC csak azért lényeges, mert ez szerverbe való kártya. Nem tudom, mi a különbség a szerverbe
+		és a desktopba való, virtualizált kártyák közt, de én szervereket telepítek. Hogy konkrétan a ezt
+		választottam, annak meg az az oka, hogy ezzel a típussal a debian guestben az Adapter1 lesz az eth0,
+		az Adapter2 az eth1 etc., míg ha a másik szerver kártyát állítom be, akkor az Adapter1 a sor végére
+		kerül. Tehát ha van Adapter1, 2, 3, akkor az Adapter2-ből lesz eth0, a 3-ból eth1 és az 1-ből lesz
+		eth2. Hogy ez bug vagy a tudatlanságom következménye, azt nem tudom. Úgy vettem észre, a MAC address
+		nem befolyásolja a sorrendet. Az már csak apróság, hogy az udev alapbeállításokkal ignorálja a
+		virtualbox-os hálókártyákat, így virtualbox guestben, VB által generált MAC address-eket használva,
+		nem jön létre a /etc/udev/rules.d/ alatt a megszokott 70-persistent-net.rulest fájl.
+
+
+
+
+Telepítés menete
+
+Debian wheezy netinstall ISO-ról boot.
+Beállítások a partícionálásig tetszőlegesek (domain név egyelőre home.local, a telepítéshez használt NI az eth0,
+ami jelen esetben az Adapter1).
+Partícionálásnál:
+	Guided use entire disk and setup LVM
+	Separate /home /usr /var ...
+	Configure LVM
+		Delete logical volume home + var
+		Create logical volume var (20GB), home (maradék - kb. 3GB)
+
+	Az előzőleg törölt LV-k használatba vétele:
+		/home ext4 default	
+		/var ext4 default
+		(lehet, hogy a /var-t néhány GB-tal kisebbre kellene méretezni és a felszabaduló helyet áttenni
+		a /srv alá, őt is külön LV-re pakolva?)
+
+Software selection
+	Kizárólag SSH szerver és Standard system utilities!
+	A Go Back gombbal vigyázni kell, mert a fentiek alapján 113 csomagot kell telepítenie, ha a Go Backet sikerül
+	eltalálni, akkor több, mint ezret próbál. (bugos a telepítő - szerintem már a squeeze-é is ilyen volt)
+
+Reboot
+
+
+Első reboot után:
+	apt-get update && apt-get dist-upgrade (nem tudom, ez valóban kell-e, mivel netről telepítek, elvileg
+		felesleges, de jobb a békesség)
+	apt-get install rkhunter (csak privát mánia, ártani nem árt általában)
+	rkhunter --update
+	rkhunter --propupdate
+
+!!!!!!!!!! -------- Itt egy VirtualBox snapshot következik a folytatás előtt! ------------- !!!!!!!!!!!!!
+	
+Hálózat beállítása
+	Az /etc/network/interfaces módosítása:
+		(a fájl elejét békénhagyni)
+		allow-hotplug eth0 eth1 eth2
+		iface eth0 inet dhcp
+		iface eth2 inet static
+			address 10.8.1.1
+			netmask 255.255.255.0
+		iface eth1 inet dhcp
+	(ifup egyesével működik, de az ifup -a, illetve a service networking restart valamiért nem húzza fel a két,
+	korábban nem használt interface-t :( )
+
+	IPv6 letiltása:
+		echo "net.ipv6.conf.all.disable_ipv6 = 1" >/etc/sysctl.d/disable_ipv6.conf"
+
+Néhány felesleges csomag eltávolítása:
+	apt-get remove nfs-common rpcbind
+	apt-get autoremove
+	(többet nem merek eltávolítani, ezeket is csak azért, mert felesleges hálózati szolgáltatást adtak)
+
+------- reboot ---------- (leginkább csak a lelkem megnyugtatására, hogy rebootnál a hálózat rendben feljön)
+
+Új csomagok telepítése:
+	apt-get install squid3	(cache, mivel jó eséllyel ugyanazt fogom telepíteni többször, eme szerver
+				segítségével - nem biztos, hogy a squid3 jó ötlet, de ki tudja... )
+	apt-get install sudo
+	apt-get install dnsmasq	(DNS, DHCP, tftp szerver)
+	apt-get install syslinux --no-install-recommends (csak a pxelinux.0 miatt lesz rá szükség)
+	apt-get install git (konfig fájlokhoz verzió kezelés)
+	apt-get install vim
+
+
+Konfig módosítások (valamennyit root jogokkal természetesen) :
+	sudo
+		visudo -> saját usernek engedélyezek mindent (hz ALL=(ALL:ALL) NOPASSWD:ALL). 
+			Nagyon nem biztonságos, később el is lehet venni, de a telepítés idejére 
+			megkönnyíti az életet.
+	git
+		cd /etc
+		git init
+		git add .
+		# szükség esetén:
+		git config --global user.name "Neved"
+		git config --global user.email "my@email.address"
+		# ------ 
+		git commit --message 'Initial commit'
+
+	rkhunter (ennek a beállítása inkább csak pavlovi reflex részemről)
+		/etc/default/rkhunter
+		APT_AUTOGEN="true"	- hogy az update-ek, telepítések után automatikusan lefusson
+					  egy rkhunter --propupd
+	sudo
+		/etc/sudoers (valójában talán jobb lenne a /etc/sudoers.d/ alá tenni egy saját file-t, de egyszerűbb
+		a visudo-t használni)
+
+	squid3
+		/etc/squid3/squid.conf
+		cache_dir ufs /var/spool/squid3 15000 32 512
+		acl localnet src 10.8.1.0/24
+		http_access allow localnet
+		(előbbi kettőt új sorként felvenni, utóbbi elől kiszedni a comment jelet - a cache_dir paramétereit
+		 csak találomra állítottam be, majd utána kell járni, hogy mi lenne az optimális)
+
+		service squid3 restart
+
+		A teszteléshez a /etc/apt/apt.conf.d/99proxy fájlba kell a köv. sor:
+		Acquire::http::Proxy "http://localhost:3128/";
+
+		(sor végén fontos a ";" !!! )
+		Egy apt-get update után meg lehet nézni a /var/log/squid3/access.log-ot. Ha minden OK, akkor a
+		működés nyomai megjelennek benne.
+
+	dnsmasq (valójában semmi szükség fájlokra darabolni, mehet az egész egyetlen állományba is)
+		/etc/dnsmasq.d/general.conf
+			# Általános beállítások
+			interface=eth1
+			bind-interfaces
+
+		/etc/dnsmasq.d/dhcp.conf
+			dhcp-range=10.8.1.10,10.8.1.254,2h
+
+		/etc/dnsmasq.d/dns.conf
+			# DNS specifikus beállítások
+			domain-needed
+			bogus-priv
+			filterwin2k
+			server=10.1.1.1@eth0
+			domain=instlan.local,10.8.1.0/24
+			addn-hosts=/etc/dnsmasq.d/hosts/hosts
+
+		/etc/dnsmasq.d/hosts/hosts
+			10.8.1.1 installer installer.instlan.local
+
+		/etc/dnsmasq.d/tftp.conf
+			enable-tftp
+			tftp-secure
+			tftp-root=/var/ftpd
+		/etc/dnsmasq.d/pxe.conf
+			pxe-prompt="What system shall I netboot?"
+			pxe-service=x86PC, "Boot from local disk"
+			pxe-service=x86PC, "Install Linux", pxelinux
+
+			
+Egyéb tennivalók:
+	mkdir /var/tftpd
+	cp -s /usr/lib/syslinux/pxelinux.0 .
+	mkdir pxelinux.cfg
+			
