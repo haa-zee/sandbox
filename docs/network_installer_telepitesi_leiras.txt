@@ -1,3 +1,6 @@
+2018.02.28 Kár ezért a leírásért. Az egész githubos ámokfutásomban ez lett volna az egyetlen hasznos dolog, de anno félbehagytam, mára meg a nagy része elavult, tárgytalanná vált. Például nincs többé Windows-om, változott a VirtualBox, én meg kvm-re váltottam és már nem is telepítgetek mindenfélét virtuális gépekbe, hogy érdemes legyen ezzel szórakozni. :(
+
+
 2013.12.24	Installer gép telepítési leírás.
 
 Az ötlet, hogy ilyet készítsek, onnan jött, hogy elég sokszor telepítek virtuális gépet, amin kipróbálok valamit, 
